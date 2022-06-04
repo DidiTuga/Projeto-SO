@@ -27,40 +27,106 @@ char *file;
 char *fileindex = "/";
 char *filedynamic = "/cgi-bin/adder?150&100";
 char *filestatic = "/godzilla.jpg";
+
+char buffer[BUFSIZ];
+enum CONSTEXPR
+{
+    MAX_REQUEST_LEN = 1024
+};
+char request[MAX_REQUEST_LEN];
+char request_template[] = "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n";
+
+in_addr_t in_addr;
+int request_len;
+int socket_file_descriptor;
+ssize_t nbytes;
+
+struct sockaddr_in sockaddr_in;
+
+void *httpProtocol(void *arg);
+
+pthread_barrier_t barrier;
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
+int num_threads = 0;
+char *schedalg;
 int main(int argc, char **argv)
 {
-    char buffer[BUFSIZ];
-    enum CONSTEXPR
+
+    if (argc < 6)
     {
-        MAX_REQUEST_LEN = 1024
-    };
-    char request[MAX_REQUEST_LEN];
-    char request_template[] = "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n";
-
-    in_addr_t in_addr;
-    int request_len;
-    int socket_file_descriptor;
-    ssize_t nbytes;
-
-    struct sockaddr_in sockaddr_in;
-
-    if (argc > 1)
+        num_threads = atoi(argv[3]);
+        schedalg = argv[4];
+        printf("./client [host] [portnum] [threads] [schedalg] [filename1] [filename2]* OPCIONAL\n");
+        exit(1);
+    }
+    if (argc == 6)
+    {
         hostname = argv[1];
-    if (argc > 2)
         server_port = strtoul(argv[2], NULL, 10);
-    if (argc > 3)
-        file = argv[3];
+        num_threads = atoi(argv[3]);
+        schedalg = argv[4];
+        file = argv[5];
+        // print das variaveis anteriors para ver se esta a funcionar
+        if (DEBUG)
+        {
+            printf("hostname: %s\n", hostname);
+            printf("server_port: %d\n", server_port);
+            printf("num_threads: %d\n", num_threads);
+            printf("schedalg: %s\n", schedalg);
+            printf("file: %s\n", file);
+        }
+        // ./client localhost 8080 1 FIFO /
+    }
     else
-        file = fileindex; // ou escolher outra filedynamic filestatic
+    {
+        file = fileindex;
+    }
 
-    // construção do pedido de http
+    // ESCOLHER ENTRE DOIS FICHEIROS :::
+    /* the name of a second file that the client is requesting from the server. This
+argument is optional. If it does not exist, then the client should repeatedly ask for only the
+first file. If it does exist, then each thread of the client should alternate which file it is
+requesting.*/
+    // ou escolher outra filedynamic filestatic
+
     request_len = snprintf(request, MAX_REQUEST_LEN, request_template, file, hostname);
     if (request_len >= MAX_REQUEST_LEN)
     {
         fprintf(stderr, "request length large: %d\n", request_len);
         exit(EXIT_FAILURE);
     }
-     /* Build the socket. */
+
+    pthread_t tid[num_threads];
+    pthread_barrier_init(&barrier, NULL, 1);
+    while (1)
+    {
+
+        // create the threads
+
+        for (int i = 0; i < num_threads; i++)
+        {
+            pthread_create(&tid[i], NULL, httpProtocol, NULL);
+        }
+        // join the threads
+        for (int i = 0; i < num_threads; i++)
+        {
+            pthread_barrier_wait(&barrier);
+            pthread_join(tid[i], NULL);
+        }
+        // For Loop n times pthread_wait thread
+        // sleep for 1 second
+        sleep(1);
+        // httpProtocol();
+    }
+    exit(EXIT_SUCCESS);
+}
+
+void *httpProtocol(void *arg)
+{
+    pthread_mutex_lock(&mutex);
+    // construção do pedido de http
+    /* Build the socket. */
     protoent = getprotobyname("tcp");
     if (protoent == NULL)
     {
@@ -89,6 +155,7 @@ int main(int argc, char **argv)
     Connect(socket_file_descriptor, (struct sockaddr *)&sockaddr_in, sizeof(sockaddr_in));
 
     /* Send HTTP request. */
+
     Rio_writen(socket_file_descriptor, request, request_len);
 
     /* Read the response. */
@@ -124,7 +191,6 @@ int main(int argc, char **argv)
         fprintf(stderr, "debug: after last read\n");
 
     Close(socket_file_descriptor);
-
-   
-    exit(EXIT_SUCCESS);
+    pthread_mutex_unlock(&mutex);
+    return NULL;
 }

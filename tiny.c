@@ -11,6 +11,8 @@
 
 queue *head = NULL;
 queue *tail = NULL;
+queue *h_dynamic = NULL;
+queue *t_dynamic = NULL;
 
 void enqueue(int *fd)
 {
@@ -28,6 +30,23 @@ void enqueue(int *fd)
   }
   tail = novo;
 }
+void enqueue_dynamic(int *fd)
+{
+  queue *novo = malloc(sizeof(queue));
+  novo->socket = fd;
+  novo->Prox = NULL;
+  if (h_dynamic == NULL)
+  {
+    h_dynamic = novo;
+  }
+  else
+  {
+
+    t_dynamic->Prox = novo;
+  }
+  t_dynamic = novo;
+}
+
 // saida da fila
 int *dequeue()
 {
@@ -48,6 +67,25 @@ int *dequeue()
     return fd;
   }
 }
+void *dequeue_dynamic()
+{
+  if (h_dynamic == NULL)
+  {
+    return NULL;
+  }
+  else
+  {
+    int *fd = h_dynamic->socket;
+    queue *aux = h_dynamic;
+    h_dynamic = h_dynamic->Prox;
+    if (h_dynamic == NULL)
+    {
+      t_dynamic = NULL;
+    }
+    free(aux);
+    return fd;
+  }
+}
 void doit(int *fd);
 void read_requesthdrs(rio_t *rp);
 int parse_uri(char *uri, char *filename, char *cgiargs);
@@ -57,6 +95,8 @@ void serve_dynamic(int fd, char *filename, char *cgiargs);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg);
 void verQueue(int *arg);
 
+int verifica_static(int fd);
+
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t condition_var = PTHREAD_COND_INITIALIZER;
 static sem_t sem;
@@ -65,6 +105,8 @@ int numeroRequestStat = 0;
 int numeroRequestDyn = 0;
 int queueSize = 0;
 char *schedalg;
+// pthread_barrier_wait() init
+
 int main(int argc, char **argv)
 {
   sem.__align = 0;
@@ -79,62 +121,242 @@ int main(int argc, char **argv)
     // schedalg: the scheduling algorithm to be performed. One of ANY, FIFO, HPSC, or HPDC.
     exit(1);
   }
-  // create thread pool
+
+  // inicializar variaveis
+  port = atoi(argv[1]);
   int nthreads = atoi(argv[2]);
   queueSize = atoi(argv[3]);
   schedalg = argv[4];
+
+  // create thread pool
   pthread_t thread_p[nthreads];
   int i;
   for (i = 0; i < nthreads; i++)
   {
     pthread_create(&thread_p[i], NULL, verQueue, NULL);
   }
-  port = atoi(argv[1]);
 
   fprintf(stderr, "Server : %s Running on  <%d> port with <%d> threads and <%d> buff-size schedalg: <%s>\n", argv[0], port, nthreads, queueSize, schedalg);
   // ./tiny.c 8080 4 4 ANY
-
+  // Abriu o ouvinte da porta
   listenfd = Open_listenfd(port);
-  while (1)
+
+  if (strcmp(schedalg, "FIFO") == 0 || strcmp(schedalg, "ANY") == 0)
   {
-
-    if (numeroRequestStat == queueSize)
+    fprintf(stderr, "Scheduling algorithm: FIFO\n");
+    while (1)
     {
-      sem_wait(&sem); // blocka enquanto espera que alguem saia da queue
-    }
-    clientlen = sizeof(clientaddr);
-    connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen); // line:netp:tiny:accept
-    int *p_connfd = malloc(sizeof(int));
-    *p_connfd = connfd;
-    pthread_mutex_lock(&mutex);
-    enqueue(p_connfd);
-    numeroRequestStat++;
-    pthread_cond_signal(&condition_var); // manda signal para trabalhar
-    pthread_mutex_unlock(&mutex);
-  }
-  sem_destroy(&sem);
-}
-
-void verQueue(int *arg)
-{
-  // os threads ficam a ver a queue e fazem o doit
-  while (1)
-  {
-    pthread_mutex_lock(&mutex);
-    int *fd = dequeue();
-    pthread_mutex_unlock(&mutex);
-
-    if (fd != NULL)
-    {
-      numeroRequestStat--;
-      doit(fd);
-      sem_post(&sem); // liberta o semaforo para trabalhar a main
-      if (numeroRequestStat == 0)
+      // se o numero de request for igual a queueSize, espera para diminuir a queue
+      if (numeroRequestStat == queueSize)
       {
-        pthread_cond_wait(&condition_var, &mutex);
+        sem_wait(&sem); // blocka enquanto espera que alguem saia da queue
+      }
+      clientlen = sizeof(clientaddr);
+      connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen); // line:netp:tiny:accept
+      int *p_connfd = malloc(sizeof(int));
+      *p_connfd = connfd;
+      int verifica = verifica_static(connfd);
+
+      pthread_mutex_lock(&mutex);
+      enqueue(p_connfd);
+      numeroRequestStat++;
+      pthread_cond_signal(&condition_var); // manda signal para trabalhar
+      pthread_mutex_unlock(&mutex);
+    }
+  }
+  else if (strcmp(schedalg, "HPSC") == 0)
+  {
+    fprintf(stderr, "Scheduling algorithm: HPSC\n");
+    while (1)
+    {
+      // se o numero de request for igual a queueSize, espera para diminuir a queue
+      if (numeroRequestStat == queueSize)
+      {
+        sem_wait(&sem); // blocka enquanto espera que alguem saia da queue
+      }
+      clientlen = sizeof(clientaddr);
+      connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen); // line:netp:tiny:accept
+      int *p_connfd = malloc(sizeof(int));
+      *p_connfd = connfd;
+      int verifica = verifica_static(connfd);
+      if (verifica == 0)
+      { // adiciona na fila dinamica
+        /* code */
+        pthread_mutex_lock(&mutex);
+        enqueue_dynamic(p_connfd);
+        numeroRequestDyn++;
+        pthread_cond_signal(&condition_var); // manda signal para trabalhar
+        pthread_mutex_unlock(&mutex);
+      }
+      else
+      {
+        pthread_mutex_lock(&mutex);
+        enqueue(p_connfd);
+        numeroRequestStat++;
+        pthread_cond_signal(&condition_var); // manda signal para trabalhar
+        pthread_mutex_unlock(&mutex);
       }
     }
   }
+  else if (strcmp(schedalg, "HPDC") == 0)
+  {
+    fprintf(stderr, "Scheduling algorithm: HPDC\n");
+    while (1)
+    {
+      // se o numero de request for igual a queueSize, espera para diminuir a queue
+      if (numeroRequestStat == queueSize)
+      {
+        sem_wait(&sem); // blocka enquanto espera que alguem saia da queue
+      }
+      clientlen = sizeof(clientaddr);
+      connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen); // line:netp:tiny:accept
+      int *p_connfd = malloc(sizeof(int));
+      *p_connfd = connfd;
+      int verifica = verifica_static(connfd);
+      if (verifica == 0)
+      { // adiciona na fila dinamica
+        /* code */
+        pthread_mutex_lock(&mutex);
+        enqueue_dynamic(p_connfd);
+        numeroRequestDyn++;
+        pthread_cond_signal(&condition_var); // manda signal para trabalhar
+        pthread_mutex_unlock(&mutex);
+      }
+      else
+      {
+        pthread_mutex_lock(&mutex);
+        enqueue(p_connfd);
+        numeroRequestStat++;
+        pthread_cond_signal(&condition_var); // manda signal para trabalhar
+        pthread_mutex_unlock(&mutex);
+      }
+    }
+  }
+  else
+  {
+    fprintf(stderr, "Scheduling algorithm: <%s> not supported\n", schedalg);
+    exit(1);
+  }
+
+  sem_destroy(&sem);
+}
+
+// Funcao das threads que esta sempre a verificar queue
+void verQueue(int *arg)
+{
+  /* verificar se o schedalg é fifo
+Se for fifo ele adiciona na queue e le da queue pois nao importa se é dinamico ou nao
+  */
+  if (strcmp(schedalg, "FIFO") == 0)
+  {
+    while (1)
+    {
+      pthread_mutex_lock(&mutex);
+      int *fd = dequeue();
+      pthread_mutex_unlock(&mutex);
+
+      if (fd != NULL)
+      {
+        numeroRequestStat--;
+        doit(fd);
+        sem_post(&sem); // liberta o semaforo para trabalhar a main
+        if (numeroRequestStat == 0)
+        {
+          pthread_cond_wait(&condition_var, &mutex);
+        }
+      }
+    }
+  }
+  /* verificar se o schedalg é HPSC
+  Se for HPSC vai ver se a queue static tem algo se tiver le da queue static e quando tiver fazia le
+  a queue dinamica e quando estao as duas fazias manda parar na main
+  */
+  else if (strcmp(schedalg, "HPSC") == 0)
+  {
+    while (1)
+    {
+      pthread_mutex_lock(&mutex);
+      int *fd = dequeue();
+      pthread_mutex_unlock(&mutex);
+
+      if (fd != NULL)
+      {
+        numeroRequestStat--;
+        doit(fd);
+        sem_post(&sem); // liberta o semaforo para trabalhar a main
+        if (numeroRequestStat == 0)
+        {
+          pthread_cond_wait(&condition_var, &mutex);
+        }
+      }
+      else if (numeroRequestDyn > 0)
+      {
+        pthread_mutex_lock(&mutex);
+        int *fd = dequeue_dynamic();
+        pthread_mutex_unlock(&mutex);
+
+        if (fd != NULL)
+        {
+          numeroRequestDyn--;
+          doit(fd);
+          sem_post(&sem); // liberta o semaforo para trabalhar a main
+          if (numeroRequestDyn == 0)
+          {
+            pthread_cond_wait(&condition_var, &mutex);
+          }
+        }
+      }
+    }
+  }
+  else if (strcmp(schedalg, "HPDC") == 0)
+  {
+    while (1)
+    {
+
+      pthread_mutex_lock(&mutex);
+      int *fd = dequeue_dynamic();
+      pthread_mutex_unlock(&mutex);
+
+      if (fd != NULL)
+      {
+        numeroRequestDyn--;
+        doit(fd);
+        sem_post(&sem); // liberta o semaforo para trabalhar a main
+        if (numeroRequestDyn == 0)
+        {
+        }
+      }
+      else if (numeroRequestStat > 0)
+      {
+        // faz os doit da queue statica
+        pthread_mutex_lock(&mutex);
+        int *fdS = dequeue();
+        pthread_mutex_unlock(&mutex);
+        if (fdS != NULL)
+        {
+          numeroRequestStat--;
+          doit(fdS);
+          sem_post(&sem); // liberta o semaforo para trabalhar a main
+          if (numeroRequestStat == 0)
+          {
+            pthread_cond_wait(&condition_var, &mutex);
+          }
+        }
+      }
+    }
+  }
+}
+
+// Function to verifica se a ligacao é statica ou dinamica
+int verifica_static(int fd)
+{
+  int is_static;
+  char uri[MAXLINE];
+  char filename[MAXLINE], cgiargs[MAXLINE];
+
+  /* verifica se o fd é statico */
+  is_static = parse_uri(uri, filename, cgiargs); // line:netp:doit:staticcheck
+  return is_static;
 }
 
 /* $end tinymain */
@@ -228,6 +450,7 @@ int parse_uri(char *uri, char *filename, char *cgiargs)
   { /* Static content */             // line:netp:parseuri:isstatic
     strcpy(cgiargs, "");             // line:netp:parseuri:clearcgi
     strcpy(filename, ".");           // line:netp:parseuri:beginconvert1
+
     strcat(filename, uri);           // line:netp:parseuri:endconvert1
     if (uri[strlen(uri) - 1] == '/') // line:netp:parseuri:slashcheck
       strcat(filename, "home.html"); // line:netp:parseuri:appenddefault
@@ -243,7 +466,7 @@ int parse_uri(char *uri, char *filename, char *cgiargs)
     }
     else
       strcpy(cgiargs, ""); // line:netp:parseuri:endextract
-    strcpy(filename, "."); // line:netp:parseuri:beginconvert2
+     strcpy(filename, "."); // line:netp:parseuri:beginconvert2
     strcat(filename, uri); // line:netp:parseuri:endconvert2
     return 0;
   }
