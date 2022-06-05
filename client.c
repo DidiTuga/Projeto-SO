@@ -18,15 +18,18 @@ Muitas Modificações
 #include <unistd.h>
 
 #include "csapp.h"
-struct protoent *protoent;
 
+struct protoent *protoent;
 struct hostent *hostent;
 char *hostname = "localhost";
 unsigned short server_port = 8080; // default port
+
+// ficheiros
 char *file;
-char *fileindex = "/";
+char *file_s;
+char *file_p;
 char *filedynamic = "/cgi-bin/adder?150&100";
-char *filestatic = "/godzilla.jpg";
+char *filestatic = "/home.html";
 
 char buffer[BUFSIZ];
 enum CONSTEXPR
@@ -36,31 +39,25 @@ enum CONSTEXPR
 char request[MAX_REQUEST_LEN];
 char request_template[] = "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n";
 
-in_addr_t in_addr;
-int request_len;
-int socket_file_descriptor;
-ssize_t nbytes;
-
-struct sockaddr_in sockaddr_in;
-
+void *fifo_funcao(void *arg);
 void *httpProtocol(void *arg);
 
-pthread_barrier_t barrier;
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t mutex;
 
-int num_threads = 0;
+int num_threads;
+int flag = 0;
+// criar array de semaforos
+sem_t *semaforos;
 char *schedalg;
 int main(int argc, char **argv)
 {
 
-    if (argc < 6)
+    if (argc < 6 || argc > 7)
     {
-        num_threads = atoi(argv[3]);
-        schedalg = argv[4];
-        printf("./client [host] [portnum] [threads] [schedalg] [filename1] [filename2]* OPCIONAL\n");
+        fprintf(stderr, "Usage: %s [host] [portnum] [threads] [schedalg] [filename1] [filename2]* OPCIONAL\n", argv[0]);
         exit(1);
     }
-    if (argc == 6)
+    else if (argc == 6)
     {
         hostname = argv[1];
         server_port = strtoul(argv[2], NULL, 10);
@@ -80,51 +77,128 @@ int main(int argc, char **argv)
     }
     else
     {
-        file = fileindex;
+        hostname = argv[1];
+        server_port = strtoul(argv[2], NULL, 10);
+        num_threads = atoi(argv[3]);
+        schedalg = argv[4];
+        file_p = argv[5];
+        file_s = argv[6];
+        // print das variaveis anteriors para ver se esta a funcionar
+        if (DEBUG)
+        {
+            printf("hostname: %s\n", hostname);
+            printf("server_port: %d\n", server_port);
+            printf("num_threads: %d\n", num_threads);
+            printf("schedalg: %s\n", schedalg);
+            printf("file_p: %s\n", file_p);
+            printf("file_s: %s\n", file_s);
+        }
     }
 
-    // ESCOLHER ENTRE DOIS FICHEIROS :::
-    /* the name of a second file that the client is requesting from the server. This
-argument is optional. If it does not exist, then the client should repeatedly ask for only the
-first file. If it does exist, then each thread of the client should alternate which file it is
-requesting.*/
-    // ou escolher outra filedynamic filestatic
+    pthread_t tid[num_threads];
 
+    //  verificar se o schedalg é FIFO ou RR
+    if (strcmp(schedalg, "FIFO") == 0)
+    {
+        flag = 1;
+        semaforos = malloc(num_threads * sizeof(sem_t));
+        // criar primeiro as threads
+        sem_init(&semaforos[0], 0, 1);
+        for (int i = 1; i < num_threads; i++)
+        {
+            sem_init(&semaforos[i], 0, 0);
+        }
+        for (int i = 0; i < num_threads; i++)
+        {
+            pthread_create(&tid[i], NULL, fifo_funcao, &i);
+        }
+        // inicializar as semaforos
+
+        // esperar as threads terminarem
+        for (int i = 0; i < num_threads; i++)
+        {
+            pthread_join(tid[i], NULL);
+        }
+        while (1)
+        {
+        }
+    }
+    else if (strcmp(schedalg, "CONCUR") == 0)
+    {
+        while (1)
+        {
+            for (int i = 0; i < num_threads; i++)
+            {
+                pthread_create(&tid[i], NULL, httpProtocol, NULL);
+            }
+            for (int i = 0; i < num_threads; i++)
+            {
+                pthread_join(tid[i], NULL);
+            }
+            sleep(1);
+        }
+    }
+    else
+    {
+        printf("o escalonamento só pode ser CONCUR ou FIFO\n");
+        exit(1);
+    }
+
+    exit(EXIT_SUCCESS);
+}
+
+// funcao para o FIFO client
+void *fifo_funcao(void *arg)
+{
+
+    int id = *(int *)arg;
+    sem_wait(&semaforos[id]);
+    httpProtocol(NULL);
+    if (id == num_threads)
+    {
+        sem_post(&semaforos[0]);
+    }
+    else
+    {
+        sem_post(&semaforos[id + 1]);
+    }
+
+    return NULL;
+}
+
+void *httpProtocol(void *arg)
+{
+    // flag usada pois se flag for 1 é FIFO ou seja nao usa os mutex
+    // mutex lock
+    if (flag == 0)
+    {
+        pthread_mutex_lock(&mutex);
+    }
+    // se o file_s for NULL é porque é existem dois ficheiros e depois crio um rand para gerar um numero aleatorio
+    // para escolher o ficheiro ou estatico ou dinamico
+    if (file_s != NULL)
+    {
+        int random = rand() % 2;
+        if (random == 0)
+        {
+            file = filedynamic;
+        }
+        else
+        {
+            file = filestatic;
+        }
+    }
+    in_addr_t in_addr;
+    int request_len;
+    int socket_file_descriptor;
+    ssize_t nbytes;
+    struct sockaddr_in sockaddr_in;
     request_len = snprintf(request, MAX_REQUEST_LEN, request_template, file, hostname);
     if (request_len >= MAX_REQUEST_LEN)
     {
         fprintf(stderr, "request length large: %d\n", request_len);
         exit(EXIT_FAILURE);
     }
-
-    pthread_t tid[num_threads];
-    pthread_barrier_init(&barrier, NULL, 1);
-    while (1)
-    {
-
-        // create the threads
-
-        for (int i = 0; i < num_threads; i++)
-        {
-            pthread_create(&tid[i], NULL, httpProtocol, NULL);
-        }
-        // join the threads
-        for (int i = 0; i < num_threads; i++)
-        {
-            pthread_barrier_wait(&barrier);
-            pthread_join(tid[i], NULL);
-        }
-        // For Loop n times pthread_wait thread
-        // sleep for 1 second
-        sleep(1);
-        // httpProtocol();
-    }
-    exit(EXIT_SUCCESS);
-}
-
-void *httpProtocol(void *arg)
-{
-    pthread_mutex_lock(&mutex);
     // construção do pedido de http
     /* Build the socket. */
     protoent = getprotobyname("tcp");
@@ -191,6 +265,9 @@ void *httpProtocol(void *arg)
         fprintf(stderr, "debug: after last read\n");
 
     Close(socket_file_descriptor);
-    pthread_mutex_unlock(&mutex);
+    if (flag == 0)
+    {
+        pthread_mutex_unlock(&mutex);
+    }
     return NULL;
 }

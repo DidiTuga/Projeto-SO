@@ -93,13 +93,13 @@ void serve_static(int fd, char *filename, int filesize);
 void get_filetype(char *filename, char *filetype);
 void serve_dynamic(int fd, char *filename, char *cgiargs);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg);
-void verQueue(int *arg);
+void * verQueue(void *arg);
 
 int verifica_static(int fd);
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t condition_var = PTHREAD_COND_INITIALIZER;
-static sem_t sem;
+sem_t sem;
 
 int numeroRequestStat = 0;
 int numeroRequestDyn = 0;
@@ -118,6 +118,7 @@ int main(int argc, char **argv)
   if (argc != 5)
   {
     fprintf(stderr, "usage: %s <port> <threads> <queue> <schedalg>\n", argv[0]);
+    // 
     // schedalg: the scheduling algorithm to be performed. One of ANY, FIFO, HPSC, or HPDC.
     exit(1);
   }
@@ -155,7 +156,6 @@ int main(int argc, char **argv)
       connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen); // line:netp:tiny:accept
       int *p_connfd = malloc(sizeof(int));
       *p_connfd = connfd;
-      int verifica = verifica_static(connfd);
 
       pthread_mutex_lock(&mutex);
       enqueue(p_connfd);
@@ -242,7 +242,7 @@ int main(int argc, char **argv)
 }
 
 // Funcao das threads que esta sempre a verificar queue
-void verQueue(int *arg)
+void * verQueue(void *arg)
 {
   /* verificar se o schedalg é fifo
 Se for fifo ele adiciona na queue e le da queue pois nao importa se é dinamico ou nao
@@ -383,7 +383,7 @@ void doit(int *p_fd)
   if (strcasecmp(method, "GET"))
   { // line:netp:doit:beginrequesterr
     clienterror(fd, method, "501", "Not Implemented", "Tiny does not implement this method");
-    return NULL;
+    return;
   }                       // line:netp:doit:endrequesterr
   read_requesthdrs(&rio); // line:netp:doit:readrequesthdrs
 
@@ -392,7 +392,7 @@ void doit(int *p_fd)
   if (stat(filename, &sbuf) < 0)
   { // line:netp:doit:beginnotfound
     clienterror(fd, filename, "404", "Not found", "Tiny couldn't find this file");
-    return NULL;
+    return ;
   } // line:netp:doit:endnotfound
 
   if (is_static)
@@ -400,7 +400,7 @@ void doit(int *p_fd)
     if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode))
     { // line:netp:doit:readable
       clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't read the file");
-      return NULL;
+      return;
     }
     serve_static(fd, filename, sbuf.st_size); // line:netp:doit:servestatic
   }
@@ -409,7 +409,7 @@ void doit(int *p_fd)
     if (!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode))
     { // line:netp:doit:executable
       clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't run the CGI program");
-      return NULL;
+      return;
     }
     serve_dynamic(fd, filename, cgiargs); // line:netp:doit:servedynamic
   }
