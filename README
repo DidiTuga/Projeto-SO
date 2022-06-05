@@ -1,3 +1,17 @@
+Trabalho De SO 2021/2022
+
+Inter Process Communication and Synchronization :
+Versão 1 31/3
+
+Contem quatro partes:
+
+* Part 1: Multi-threaded Server [x]
+* Part 2: Scheduling Policies [x]
+* Part 3: Usage Statistics []
+* Part 4: Multi-threaded Client [x] - Semi feito falta o fifo
+
+----------------------- 
+
 Tiny Web server
 Dave O'Hallaron
 Carnegie Mellon University
