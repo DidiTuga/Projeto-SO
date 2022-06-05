@@ -29,7 +29,7 @@ char *file;
 char *file_s;
 char *file_p;
 char *filedynamic = "/cgi-bin/adder?150&100";
-char *filestatic = "/home.html";
+ char *filestatic = "/home.html";
 
 char buffer[BUFSIZ];
 enum CONSTEXPR
@@ -47,7 +47,7 @@ pthread_mutex_t mutex;
 int num_threads;
 int flag = 0;
 // criar array de semaforos
-sem_t *semaforos;
+sem_t sem_threads[thread_pool_size]; // 20
 char *schedalg;
 int main(int argc, char **argv)
 {
@@ -62,6 +62,10 @@ int main(int argc, char **argv)
         hostname = argv[1];
         server_port = strtoul(argv[2], NULL, 10);
         num_threads = atoi(argv[3]);
+        if (num_threads > 20)
+        {
+            num_threads = thread_pool_size;
+        }
         schedalg = argv[4];
         file = argv[5];
         // print das variaveis anteriors para ver se esta a funcionar
@@ -80,6 +84,10 @@ int main(int argc, char **argv)
         hostname = argv[1];
         server_port = strtoul(argv[2], NULL, 10);
         num_threads = atoi(argv[3]);
+        if (num_threads > 20)
+        {
+            num_threads = thread_pool_size;
+        }
         schedalg = argv[4];
         file_p = argv[5];
         file_s = argv[6];
@@ -101,26 +109,27 @@ int main(int argc, char **argv)
     if (strcmp(schedalg, "FIFO") == 0)
     {
         flag = 1;
-        semaforos = malloc(num_threads * sizeof(sem_t));
-        // criar primeiro as threads
-        sem_init(&semaforos[0], 0, 1);
-        for (int i = 1; i < num_threads; i++)
-        {
-            sem_init(&semaforos[i], 0, 0);
-        }
+        // ids das threads
+        int ids[num_threads];
+        // Inicializar as threads
         for (int i = 0; i < num_threads; i++)
         {
-            pthread_create(&tid[i], NULL, fifo_funcao, &i);
+            ids[i] = i;
+            pthread_create(&tid[i], NULL, fifo_funcao, &ids[i]);
         }
-        // inicializar as semaforos
+         // Inicializar a primeira a 1
 
-        // esperar as threads terminarem
+
+        // Inicializar as outras a 0
+        for (int i = 0; i < num_threads; i++)
+        {
+            sem_init(&sem_threads[i], 0, 0);
+        }
+        sem_init(&sem_threads[0], 0, 1);
+        // chamar a funcao que vai fazer as threads
         for (int i = 0; i < num_threads; i++)
         {
             pthread_join(tid[i], NULL);
-        }
-        while (1)
-        {
         }
     }
     else if (strcmp(schedalg, "CONCUR") == 0)
@@ -148,19 +157,31 @@ int main(int argc, char **argv)
 }
 
 // funcao para o FIFO client
+// ativa o semaphore da frente e para o seu
 void *fifo_funcao(void *arg)
 {
+    // mutex lock
 
-    int id = *(int *)arg;
-    sem_wait(&semaforos[id]);
-    httpProtocol(NULL);
-    if (id == num_threads)
+    while (1)
     {
-        sem_post(&semaforos[0]);
-    }
-    else
-    {
-        sem_post(&semaforos[id + 1]);
+        int id = *(int *)arg;
+        printf("Thread %d: waiting for semaphore\n", id);
+        if(sem_wait(&sem_threads[id]) != 0)
+        {
+            printf("Thread %d: waiting for semaphore\n", id);
+        }
+        httpProtocol(NULL);
+        if (id == (num_threads-1))
+        {
+            sem_post(&sem_threads[0]);
+            // printf("Thread %d: posting semaphore\n", id);
+        }
+        else
+        {
+            sem_post(&sem_threads[id + 1]);
+            // printf("Thread %d: posting semaphore\n", id);
+        }
+        sleep(1);
     }
 
     return NULL;
@@ -170,6 +191,7 @@ void *httpProtocol(void *arg)
 {
     // flag usada pois se flag for 1 é FIFO ou seja nao usa os mutex
     // mutex lock
+
     if (flag == 0)
     {
         pthread_mutex_lock(&mutex);
@@ -179,7 +201,7 @@ void *httpProtocol(void *arg)
     if (file_s != NULL)
     {
         int random = rand() % 2;
-        if (random == 0)
+        if (random == 0) // MUDAR
         {
             file = filedynamic;
         }

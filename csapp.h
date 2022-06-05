@@ -62,7 +62,7 @@ extern char **environ; /* defined by libc */
 #define	MAXLINE	 8192  /* max text line length */
 #define MAXBUF   8192  /* max I/O buffer size */
 #define LISTENQ  1024  /* second argument to listen() */
-
+#define thread_pool_size 20
 
 /* Our own error-handling functions */
 void unix_error(char *msg);

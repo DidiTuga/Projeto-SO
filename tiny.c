@@ -170,7 +170,7 @@ int main(int argc, char **argv)
     while (1)
     {
       // se o numero de request for igual a queueSize, espera para diminuir a queue
-      if (numeroRequestStat == queueSize)
+      if ((numeroRequestStat+numeroRequestDyn) == queueSize)
       {
         sem_wait(&sem); // blocka enquanto espera que alguem saia da queue
       }
@@ -204,7 +204,7 @@ int main(int argc, char **argv)
     while (1)
     {
       // se o numero de request for igual a queueSize, espera para diminuir a queue
-      if (numeroRequestStat == queueSize)
+      if ((numeroRequestStat+numeroRequestDyn) == queueSize)
       {
         sem_wait(&sem); // blocka enquanto espera que alguem saia da queue
       }
